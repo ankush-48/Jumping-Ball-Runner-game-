@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Jumping Ball Runner</title>
+<style>
+  /* --- Reset & page --- */
+  html,body{height:100%;margin:0;background:linear-gradient(#87CEFA,#B0E0E6);font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+  .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:18px;box-sizing:border-box}
+  h1{margin:6px 0 12px;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,0.15);font-weight:800}
+  /* --- Game container --- */
+  .gamecard{width:min(920px,96vw);max-width:1100px;background:linear-gradient(180deg,#fff8ea,#fff2df);border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.18);overflow:hidden;padding:16px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .stats{display:flex;gap:10px;align-items:center}
+  .stat{background:#fff;border-radius:12px;padding:8px 12px;box-shadow:0 2px 6px rgba(0,0,0,0.06);font-weight:700}
+  .controls{display:flex;gap:8px;align-items:center}
+  button{background:#ff8ba7;border:none;color:#fff;padding:8px 12px;border-radius:10px;font-weight:700;cursor:pointer;box-shadow:0 6px 0 rgba(0,0,0,0.08);}
+  button.secondary{background:#6ecbff;color:#003;box-shadow:none}
+  button:active{transform:translateY(2px)}
+  canvas{display:block;width:100%;height:420px;background:linear-gradient(#84d6ff,#cde9ff);border-radius:12px;}
+  .footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  .small{font-size:13px;color:#333}
+  .mutebtn{background:linear-gradient(90deg,#ffd36b,#ff9bb2);padding:6px 10px;border-radius:10px;font-weight:800}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  /* mobile tweaks */
+  @media (max-width:600px){canvas{height:360px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="gamecard" role="application" aria-label="Jumping Ball Runner game">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56'><rect rx='12' width='56' height='56' fill='%23ff8ba7'/><circle cx='28' cy='22' r='10' fill='%23fff'/><circle cx='24' cy='20' r='2' fill='%23000'/><circle cx='32' cy='20' r='2' fill='%23000'/><path d='M20 34 q8 8 16 0' stroke='%23000' stroke-width='3' fill='none' stroke-linecap='round' /></svg>" alt="logo" style="width:56px;height:56px;border-radius:10px;box-shadow:0 6px 0 rgba(0,0,0,0.06)"/>
+      <div>
+        <h1>Jumping Ball Runner</h1>
+        <div style="font-size:13px;color:#444;margin-top:-6px">Jump over goofy obstacles. Survive. Collect high scores. Enjoy silly sounds!</div>
+      </div>
+    </div>
+
+    <div class="topbar" style="margin-top:12px">
+      <div class="stats">
+        <div class="stat">Score: <span id="score">0</span></div>
+        <div class="stat">High: <span id="high">0</span></div>
+        <div class="stat">Speed: <span id="speed">1.0</span>x</div>
+      </div>
+      <div class="controls">
+        <button id="retry">Retry</button>
+        <button id="pause" class="secondary">Pause</button>
+        <button id="mute" class="mutebtn">🔊 Sound</button>
+      </div>
+    </div>
+
+    <div style="position:relative">
+      <canvas id="game"></canvas>
+      <div id="centerOverlay" class="overlay" style="pointer-events:none">
+        <div id="message" style="background:linear-gradient(#fff7ec,#fff3df);padding:18px 22px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,0.12);display:none;text-align:center">
+          <div id="messageTitle" style="font-weight:900;font-size:22px;color:#333;margin-bottom:6px"></div>
+          <div id="messageText" style="color:#444;font-weight:600"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="small">Controls: Space / Tap / Up to jump. Hold for longer jump.</div>
+      <div class="small">Made with ❤️ — cartoon graphics & parallax</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Single-file Jumping Ball Runner
+// Features: parallax background, increasing speed, high score in localStorage, retry, funny sounds via WebAudio
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let DPR = window.devicePixelRatio || 1;
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.floor(rect.width * DPR);
+  canvas.height = Math.floor(rect.height * DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize',resize);
+resize();
+
+// UI elements
+const scoreEl = document.getElementById('score');
+const highEl = document.getElementById('high');
+const speedEl = document.getElementById('speed');
+const retryBtn = document.getElementById('retry');
+const pauseBtn = document.getElementById('pause');
+const muteBtn = document.getElementById('mute');
+const messageBox = document.getElementById('message');
+const messageTitle = document.getElementById('messageTitle');
+const messageText = document.getElementById('messageText');
+
+// Game state
+let running = true;
+let gameOver = false;
+let score = 0;
+let high = parseInt(localStorage.getItem('jbr_high')||0,10);
+highEl.textContent = high;
+let baseSpeed = 3; // baseline world speed
+let speedMultiplier = 1;
+let worldSpeed = baseSpeed;
+let spawnTimer = 0;
+let timeElapsed = 0;
+let lastTime = performance.now();
+
+// Player
+const player = {
+  x:80, y:0, vy:0, w:46, h:46, onGround:false, jumping:false
+};
+
+// Obstacles
+let obstacles = [];
+
+// Parallax layers
+const layers = [
+  {speed:0.2, color:'#cde9ff', items:[]},
+  {speed:0.5, color:'#9fd6ff', items:[]},
+  {speed:1.0, color:'#6ecbff', items:[]}
+];
+function seedLayers() {
+  layers.forEach((L,i)=>{
+    L.items = [];
+    for(let k=0;k<8;k++){
+      L.items.push({x:k*200 + Math.random()*120,y:50+ i*20 + Math.random()*30, size: 40 + Math.random()*30});
+    }
+  });
+}
+seedLayers();
+
+// Audio: tiny fun sound synthesizer
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+let soundOn = true;
+function ensureAudio(){ if(!audioCtx) audioCtx = new AudioCtx(); }
+function playBeep(freq, type='sine', duration=0.12, vol=0.14){ if(!soundOn) return; ensureAudio(); const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type = type; o.frequency.value = freq; g.gain.value = vol; o.connect(g); g.connect(audioCtx.destination); o.start(); g.gain.setValueAtTime(vol,audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime + duration); o.stop(audioCtx.currentTime + duration + 0.02); }
+function playBoopSequence(){ playBeep(880,'sine',0.06,0.08); setTimeout(()=>playBeep(660,'square',0.08,0.1),60); }
+function playBounce(){ playBeep(520,'triangle',0.14,0.12); }
+function playHit(){ ensureAudio(); if(!soundOn) return; const o1=audioCtx.createOscillator(); const o2=audioCtx.createOscillator(); const g=audioCtx.createGain(); o1.type='sawtooth'; o2.type='square'; o1.frequency.value=220; o2.frequency.value=120; o1.connect(g); o2.connect(g); g.connect(audioCtx.destination); g.gain.value=0.2; o1.start(); o2.start(); g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime + 0.5); o1.stop(audioCtx.currentTime + 0.52); o2.stop(audioCtx.currentTime + 0.52); }
+function playMilestone(){ playBeep(1200,'sine',0.08,0.08); setTimeout(()=>playBeep(1600,'sine',0.06,0.06),90); }
+
+// Helpers: cartoon draw
+function drawBall(x,y,r){
+  ctx.save();
+  // shadow
+  ctx.beginPath(); ctx.ellipse(x,y+r*0.9,r*0.9, r*0.35, 0,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fill();
+  // body
+  const g = ctx.createLinearGradient(x-r,y-r,x+r,y+r); g.addColorStop(0,'#ffd36b'); g.addColorStop(1,'#ff9bb2');
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+  // eyes
+  ctx.beginPath(); ctx.fillStyle='#fff'; ctx.arc(x-7,y-6,6,0,Math.PI*2); ctx.arc(x+9,y-6,6,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.fillStyle='#000'; ctx.arc(x-6,y-6,2.6,0,Math.PI*2); ctx.arc(x+10,y-6,2.6,0,Math.PI*2); ctx.fill();
+  // smile
+  ctx.beginPath(); ctx.strokeStyle='#80263a'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.arc(x,y+2,12,0.15*Math.PI,0.85*Math.PI); ctx.stroke();
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  ctx.save();
+  // goofy face
+  ctx.translate(o.x, o.y);
+  ctx.scale(1,1);
+  ctx.fillStyle = o.color;
+  ctx.beginPath(); ctx.roundRect(-o.w/2, -o.h, o.w, o.h, 8); ctx.fill();
+  // eyes
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.ellipse(-o.w*0.2, -o.h*0.6, o.w*0.15, o.h*0.12,0,0,Math.PI*2); ctx.ellipse(o.w*0.2, -o.h*0.55, o.w*0.12, o.h*0.1,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(-o.w*0.2,-o.h*0.6,4,0,Math.PI*2); ctx.arc(o.w*0.2,-o.h*0.55,3,0,Math.PI*2); ctx.fill();
+  // mouth
+  ctx.beginPath(); ctx.fillStyle='#80263a'; ctx.ellipse(0, -o.h*0.25, o.w*0.25, o.h*0.12, 0, 0, Math.PI); ctx.fill();
+  ctx.restore();
+}
+
+// Add roundRect to ctx if not present
+if(!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){ if(typeof r==='number'){ r={tl:r,tr:r,br:r,bl:r}; } this.beginPath(); this.moveTo(x + r.tl, y); this.lineTo(x + w - r.tr, y); this.quadraticCurveTo(x + w, y, x + w, y + r.tr); this.lineTo(x + w, y + h - r.br); this.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h); this.lineTo(x + r.bl, y + h); this.quadraticCurveTo(x, y + h, x, y + h - r.bl); this.lineTo(x, y + r.tl); this.quadraticCurveTo(x, y, x + r.tl, y); this.closePath(); }
+}
+
+// Input
+let holdJump = false;
+function jumpStart(){ if(gameOver) return; if(!player.onGround && player.vy < -5) return; player.vy = -10; player.onGround = false; player.jumping = true; playBounce(); }
+function jumpHold(){ holdJump = true; }
+function jumpRelease(){ holdJump = false; player.jumping = false; }
+
+document.addEventListener('keydown', e=>{ if(e.code==='Space' || e.code==='ArrowUp'){ e.preventDefault(); if(!running) return; jumpStart(); }});
+document.addEventListener('keyup', e=>{ if(e.code==='Space' || e.code==='ArrowUp'){ jumpRelease(); }});
+canvas.addEventListener('pointerdown', e=>{ if(gameOver) return; jumpStart(); });
+canvas.addEventListener('pointerup', e=>{ jumpRelease(); });
+canvas.addEventListener('touchstart', e=>{ e.preventDefault(); if(gameOver) return; jumpStart(); });
+canvas.addEventListener('touchend', e=>{ e.preventDefault(); jumpRelease(); });
+
+// Game loop
+function spawnObstacle(){
+  const h = 24 + Math.random()*70;
+  const w = 24 + Math.random()*40;
+  const y = canvas.height/DPR - 12;
+  obstacles.push({x:canvas.width/DPR + 60, y:y, w:w, h:h, color: ['#ffad5a','#7bd389','#ff7ab6','#ffd36b'][Math.floor(Math.random()*4)]});
+}
+
+function reset(){
+  obstacles = [];
+  score = 0; timeElapsed = 0; worldSpeed = baseSpeed; spawnTimer = 0; gameOver=false; running=true; player.y = canvas.height/DPR - player.h - 12; player.vy = 0; player.onGround = true; scoreEl.textContent = 0; speedEl.textContent = worldSpeed.toFixed(1);
+  seedLayers();
+}
+
+retryBtn.addEventListener('click', ()=>{ reset(); hideMessage(); playBoopSequence(); if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); });
+
+pauseBtn.addEventListener('click', ()=>{ running = !running; pauseBtn.textContent = running? 'Pause':'Resume'; if(running){ lastTime = performance.now(); loop(lastTime);} });
+
+muteBtn.addEventListener('click', ()=>{ soundOn = !soundOn; muteBtn.textContent = soundOn? '🔊 Sound' : '🔇 Muted'; if(soundOn) ensureAudio(); });
+
+// initial player position
+player.y = canvas.height/DPR - player.h - 12;
+
+function showMessage(title,text){ messageTitle.textContent=title; messageText.textContent=text; messageBox.style.display='block'; }
+function hideMessage(){ messageBox.style.display='none'; }
+
+function loop(now){
+  if(!running) return;
+  const dt = Math.min(0.05,(now - lastTime)/1000);
+  lastTime = now; timeElapsed += dt;
+  // speed ramps up gradually based on survival time
+  speedMultiplier = 1 + Math.min(3, timeElapsed/15);
+  worldSpeed = baseSpeed * speedMultiplier;
+  speedEl.textContent = worldSpeed.toFixed(1);
+
+  // spawn obstacles more often as speed increases
+  spawnTimer -= dt * (0.8 + speedMultiplier*0.5);
+  if(spawnTimer <= 0){ spawnObstacle(); spawnTimer = 1.2 - Math.min(0.8, speedMultiplier*0.15) + Math.random()*0.6; }
+
+  // physics
+  if(!player.onGround){
+    player.vy += 28 * dt; // gravity
+    if(holdJump && player.vy < 0) player.vy -= 10 * dt; // hold for extra lift
+  }
+  player.y += player.vy;
+  const groundY = canvas.height/DPR - 12 - player.h/2;
+  if(player.y > canvas.height/DPR - player.h - 12){ player.y = canvas.height/DPR - player.h - 12; player.vy = 0; player.onGround = true; }
+
+  // obstacles move
+  for(let i=obstacles.length-1;i>=0;i--){ const o=obstacles[i]; o.x -= worldSpeed * 60 * dt; if(o.x < -200) obstacles.splice(i,1); }
+
+  // collision detection (AABB approximating player circle)
+  const px = player.x, py = player.y + player.h/2, pr = player.w/2.2;
+  for(let o of obstacles){ const ox = o.x, oy = o.y - o.h/2, ow=o.w, oh=o.h; // box extents
+    const closestX = Math.max(ox - ow/2, Math.min(px, ox + ow/2));
+    const closestY = Math.max(oy, Math.min(py, oy + oh));
+    const dx = px - closestX, dy = py - closestY; if(dx*dx + dy*dy < pr*pr - 6){ // collision
+      if(!gameOver){ gameOver = true; running=false; showGameOver(); playHit(); saveHigh(); }
+    }
+  }
+
+  // scoring: +1 per second scaled
+  score += dt * Math.floor(1 + speedMultiplier*0.8);
+  scoreEl.textContent = Math.floor(score);
+
+  // milestone sound
+  if(Math.floor(score) > 0 && Math.floor(score) % 50 === 0 && Math.abs((score%50)-0) < 0.02){ playMilestone(); }
+
+  // render
+  render();
+
+  if(running) requestAnimationFrame(loop);
+}
+
+function showGameOver(){ showMessage('Game Over','Tap Retry to try again — you scored ' + Math.floor(score) + '!'); }
+function saveHigh(){ const s=Math.floor(score); if(s>high){ high=s; localStorage.setItem('jbr_high',String(high)); highEl.textContent=high; showMessage('New High Score!','You beat your previous best — '+s+' points!'); playBoopSequence(); } }
+
+function render(){
+  // clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const W = canvas.width/DPR, H = canvas.height/DPR;
+
+  // sky gradient (canvas background is already bluish; we add sun & clouds)
+  // parallax layers
+  layers.forEach((L, idx)=>{
+    const ly = 40 + idx*40;
+    for(let i=0;i<L.items.length;i++){
+      const it=L.items[i]; it.x -= L.speed * worldSpeed * 0.25; if(it.x < -80) it.x = W + Math.random()*140; ctx.beginPath(); ctx.ellipse(it.x, ly + Math.sin((it.x+i)*0.02)*8 + it.y*0.02, it.size*0.6, it.size*0.35, 0,0,Math.PI*2); ctx.fillStyle=L.color; ctx.fill();
+    }
+  });
+
+  // ground
+  ctx.fillStyle='#6bd389'; ctx.fillRect(0,H-40,W,40);
+  // track stripes
+  for(let i=0;i<6;i++){ ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.fillRect((i*120 + (timeElapsed* -worldSpeed*20)%120), H-20, 80,6); }
+
+  // obstacles
+  obstacles.forEach(o=>{ drawObstacle({x:o.x, y: H - 12, w:o.w, h:o.h, color:o.color}); });
+
+  // player bob for fun
+  drawBall(player.x, player.y + player.h/2, player.w/2);
+
+  // little UI: velocity indicator
+  ctx.fillStyle='rgba(0,0,0,0.06)'; ctx.fillRect(12,12,110,40); ctx.fillStyle='#fff'; ctx.font='600 14px system-ui'; ctx.fillText('Time: '+Math.floor(timeElapsed)+'s',20,32);
+}
+
+// start
+reset(); lastTime = performance.now(); requestAnimationFrame(loop);
+
+// expose some cheats for fun (dev)
+window.__JBR = {reset, spawnObstacle, obstacles};
+
+// ensure audio on first interaction for some browsers
+window.addEventListener('pointerdown', ()=>{ if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); });
+
+</script>
+</body>
+</html>
